@@ -1,0 +1,402 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+<title>PC 配置价格追踪 · 闲鱼</title>
+<script src="https://cdn.jsdelivr.net/npm/chart.js@4"></script>
+<script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-datalabels@2"></script>
+<style>
+  *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
+  body{font-family:-apple-system,"PingFang SC","Microsoft YaHei",sans-serif;
+       margin:0;padding:12px;background:#f5f6f8;color:#222;font-size:14px}
+  h1{font-size:17px;margin:0 0 2px}
+  .sub{color:#888;font-size:11px;margin-bottom:12px}
+  .card{background:#fff;border-radius:10px;padding:12px;margin-bottom:12px;
+        box-shadow:0 1px 3px rgba(0,0,0,.06)}
+  .card h2{font-size:14px;margin:0 0 10px;display:flex;justify-content:space-between;
+           align-items:center;flex-wrap:wrap;gap:6px}
+  .date-bar{display:flex;gap:8px;align-items:center;margin-bottom:10px}
+  .date-bar input{flex:1;padding:8px;border:1px solid #ddd;border-radius:6px;font-size:14px}
+  .date-bar .remain{font-size:11px;color:#e4393c;white-space:nowrap}
+  .part-row{display:flex;align-items:center;gap:8px;padding:8px 0;border-bottom:1px solid #f3f3f3}
+  .part-row:last-child{border-bottom:0}
+  .part-name{flex:1;font-size:13px;color:#333;line-height:1.3}
+  .part-row input{width:92px;padding:7px 6px;border:1px solid #e0e0e0;border-radius:6px;
+                  font-size:14px;text-align:right;flex-shrink:0}
+  .part-row input:focus{border-color:#e4393c;outline:none}
+  .yuan{color:#999;font-size:11px;flex-shrink:0}
+  button{padding:10px;background:#e4393c;color:#fff;border:0;border-radius:8px;
+         font-size:15px;width:100%;cursor:pointer;margin-top:10px}
+  button:active{background:#c92f32}
+  .total-bar{display:flex;justify-content:space-between;padding:10px 0;
+             border-top:2px solid #333;font-weight:700;font-size:15px;margin-top:6px}
+  .chart-box{position:relative;width:100%;height:320px}
+  canvas{width:100%!important;height:100%!important}
+  .switch-row{display:flex;gap:6px;margin-bottom:8px;flex-wrap:wrap}
+  .switch-row button{padding:6px 12px;font-size:12px;width:auto;background:#eee;
+                     color:#555;margin:0;flex:0 0 auto}
+  .switch-row button.active{background:#2d6cdf;color:#fff}
+  .switch-row button.active.y{background:#ff8c00}
+  .chart-label{font-size:11px;color:#999;margin:6px 0 4px}
+  details.history-item{border-bottom:1px solid #f3f3f3;padding:6px 0}
+  details.history-item summary{display:flex;justify-content:space-between;
+        cursor:pointer;font-size:13px;list-style:none}
+  details.history-item summary::-webkit-details-marker{display:none}
+  details.history-item summary .d{color:#666}
+  details.history-item summary .v{font-weight:700;color:#e4393c}
+  .detail-grid{display:grid;grid-template-columns:1fr 1fr;gap:4px 12px;
+               padding:8px 0 4px;font-size:12px;color:#555}
+  .detail-grid span:nth-child(even){text-align:right;color:#e4393c;font-weight:600}
+  .hint{font-size:11px;color:#aaa;margin-top:6px;line-height:1.5}
+</style>
+</head>
+<body>
+
+<h1>PC 配置价格追踪 · 闲鱼</h1>
+<div class="sub">i5-12400F · H610M-A D4 · RTX4060 · 16G DDR4 · 数据存于本机浏览器</div>
+
+<!-- 录入 -->
+<div class="card">
+  <h2>📝 录入闲鱼价 <span style="font-weight:400;font-size:11px;color:#999" id="saved-tip"></span></h2>
+  <div class="date-bar">
+    <input type="date" id="input-date">
+    <span class="remain" id="remain"></span>
+  </div>
+  <div id="form-area"></div>
+  <div class="total-bar">
+    <span>当日整机合计</span>
+    <span id="day-total" style="color:#e4393c">—</span>
+  </div>
+  <button onclick="saveDay()">保存当天价格</button>
+  <div class="hint">价格留空 = 该配件当天无数据；同一天重复保存会覆盖。</div>
+</div>
+
+<!-- 图表 -->
+<div class="card">
+  <h2>📈 价格走势</h2>
+  <div class="chart-label">看哪条数据</div>
+  <div class="switch-row" id="mode-switch"></div>
+  <div class="chart-label">图表类型</div>
+  <div class="switch-row" id="type-switch"></div>
+  <div class="chart-box"><canvas id="chart"></canvas></div>
+</div>
+
+<!-- 历史 -->
+<div class="card">
+  <h2>🗂 历史记录 <span style="font-weight:400;font-size:11px;color:#999" id="record-count"></span></h2>
+  <div id="history-list"></div>
+</div>
+
+<script>
+if (typeof ChartDataLabels !== "undefined") Chart.register(ChartDataLabels);
+
+// ========== 配置 ==========
+const END_DATE = "2026-12-15";
+const STORAGE_KEY = "pc_price_xianyu_v1";
+
+const PARTS = [
+  { key:"cpu",    name:"CPU i5-12400F",            kw:"i5 12400F" },
+  { key:"mb",     name:"主板 华硕 H610M-A D4",      kw:"PRIME H610M-A D4" },
+  { key:"gpu",    name:"显卡 七彩虹 战斧 4060 DUO",  kw:"战斧 RTX4060 DUO" },
+  { key:"ram",    name:"内存 金百达 银爵 8G×2",     kw:"金百达 银爵 DDR4 3200" },
+  { key:"ssd",    name:"硬盘 致态 TiPlus5000 1TB",  kw:"致态 TiPlus5000 1TB" },
+  { key:"psu",    name:"电源 长城 X6 650W 金牌",    kw:"长城 X6 650W" },
+  { key:"cooler", name:"散热 利民 AX120 R SE",      kw:"利民 AX120 R SE" },
+  { key:"case",   name:"机箱 长城 商逸R68",         kw:"长城 商逸R68" },
+];
+
+// ========== 工具 ==========
+function loadAll(){
+  try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || {}; }
+  catch(e){ return {}; }
+}
+function saveAll(d){ localStorage.setItem(STORAGE_KEY, JSON.stringify(d)); }
+
+// 千分位格式化：4899 -> "4,899"
+function fmtMoney(v){
+  if(v == null || isNaN(v)) return "";
+  return Number(v).toLocaleString("zh-CN", { maximumFractionDigits: 0 });
+}
+
+// ========== 表单 ==========
+function buildForm(){
+  const area = document.getElementById("form-area");
+  area.innerHTML = "";
+  PARTS.forEach(p=>{
+    const row = document.createElement("div");
+    row.className = "part-row";
+    row.innerHTML = `
+      <div class="part-name">${p.name}</div>
+      <input type="number" step="0.1" inputmode="decimal" placeholder="—"
+             id="in_${p.key}" oninput="updateDayTotal()">
+      <span class="yuan">元</span>`;
+    area.appendChild(row);
+  });
+}
+
+function fillFormForDate(date){
+  const all = loadAll();
+  const day = all[date] || {};
+  PARTS.forEach(p=>{
+    const el = document.getElementById(`in_${p.key}`);
+    el.value = (day[p.key] != null) ? day[p.key] : "";
+  });
+  updateDayTotal();
+}
+
+function updateDayTotal(){
+  let total = 0;
+  PARTS.forEach(p=>{
+    const v = parseFloat(document.getElementById(`in_${p.key}`).value);
+    if(!isNaN(v) && v > 0) total += v;
+  });
+  document.getElementById("day-total").textContent = total > 0 ? "¥" + fmtMoney(total) : "—";
+}
+
+function saveDay(){
+  const date = document.getElementById("input-date").value;
+  if(!date){ alert("请先选择日期"); return; }
+  if(date > END_DATE){ alert("记录截止到 " + END_DATE); return; }
+
+  const all = loadAll();
+  const day = {};
+  let filled = 0;
+
+  PARTS.forEach(p=>{
+    const v = parseFloat(document.getElementById(`in_${p.key}`).value);
+    if(!isNaN(v) && v > 0){ day[p.key] = v; filled++; }
+  });
+
+  if(filled === 0){ alert("没有填入任何有效价格"); return; }
+
+  all[date] = day;
+  saveAll(all);
+  document.getElementById("saved-tip").textContent = "✅ 已保存 " + date;
+  renderChart();
+  renderHistory();
+  updateRemain();
+}
+
+// ========== 剩余天数 ==========
+function updateRemain(){
+  const today = new Date(); today.setHours(0,0,0,0);
+  const end = new Date(END_DATE + "T00:00:00");
+  const days = Math.ceil((end - today) / 86400000);
+  document.getElementById("remain").textContent =
+    days > 0 ? `距 ${END_DATE} 还有 ${days} 天` : "已到期";
+}
+
+// ========== 图表 ==========
+let chart;
+let chartMode = "total";
+let chartType = "bar";
+
+function buildModeSwitch(){
+  const wrap = document.getElementById("mode-switch");
+  wrap.innerHTML = "";
+  const add = (label, mode)=>{
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.className = chartMode === mode ? "active" : "";
+    b.onclick = ()=>{ chartMode = mode; buildModeSwitch(); renderChart(); };
+    wrap.appendChild(b);
+  };
+  add("整机总价", "total");
+  PARTS.forEach(p=> add(p.name.split(" ")[0], p.key));
+}
+
+function buildTypeSwitch(){
+  const wrap = document.getElementById("type-switch");
+  wrap.innerHTML = "";
+  const add = (label, type)=>{
+    const b = document.createElement("button");
+    b.textContent = label;
+    b.className = chartType === type ? "active y" : "";
+    b.onclick = ()=>{ chartType = type; buildTypeSwitch(); renderChart(); };
+    wrap.appendChild(b);
+  };
+  add("柱形图", "bar");
+  add("折线图", "line");
+}
+
+function getSeries(mode){
+  const all = loadAll();
+  const dates = Object.keys(all).sort();
+  if(mode === "total"){
+    const values = dates.map(d=>{
+      let sum = 0, cnt = 0;
+      PARTS.forEach(p=>{
+        const v = all[d][p.key];
+        if(typeof v === "number" && v > 0){ sum += v; cnt++; }
+      });
+      return cnt > 0 ? sum : null;
+    });
+    return { dates, values, label: "整机总价" };
+  }
+  const values = dates.map(d=>{
+    const v = all[d][mode];
+    return (typeof v === "number" && v > 0) ? v : null;
+  });
+  const part = PARTS.find(p=>p.key === mode);
+  return { dates, values, label: part ? part.name : mode };
+}
+
+function renderChart(){
+  const { dates, values, label } = getSeries(chartMode);
+  const shortDates = dates.map(d=>d.slice(5)); // MM-DD
+  const n = dates.length;
+
+  // 有效数值（用于自适应 Y 轴与标签显示）
+  const validValues = values.filter(v => v != null && !isNaN(v));
+  const isBar = chartType === "bar";
+  const color = chartMode === "total" ? "#e4393c" : "#ff8c00";
+  const bgColor = chartMode === "total" ? "rgba(228,57,60,.75)" : "rgba(255,140,0,.75)";
+
+  // 数据点标签字号：随点数自适应，保证"看得清 + 不重叠"
+  const labelFont = n <= 6 ? 11 : n <= 10 ? 10 : n <= 18 ? 9 : n <= 28 ? 8 : 7;
+
+  // 数据标签显示策略：全部显示（用户要求标清），但当点数 > 30 时，只在整数序号或首尾显示，避免挤爆
+  const showLabel = (ctx) => {
+    if (ctx.dataset.data[ctx.dataIndex] == null) return false;
+    if (n <= 30) return true;
+    // 超过 30 个点：首尾 + 每隔 max(1, floor(n/20)) 显示
+    if (ctx.dataIndex === 0 || ctx.dataIndex === n - 1) return true;
+    const step = Math.max(1, Math.floor(n / 20));
+    return ctx.dataIndex % step === 0;
+  };
+
+  const dataset = {
+    label,
+    data: values,
+    borderColor: color,
+    backgroundColor: isBar ? bgColor : "rgba(255,140,0,.08)",
+    borderWidth: isBar ? 1.5 : 2,
+    borderRadius: isBar ? 4 : 0,
+    maxBarThickness: 46,          // 单点或点数很少时柱子不会撑满
+    barPercentage: 0.75,
+    categoryPercentage: 0.8,
+    tension: 0.3,
+    pointRadius: isBar ? 0 : 3,
+    pointHoverRadius: 5,
+    pointBackgroundColor: color,
+    fill: !isBar,
+    spanGaps: true,
+  };
+
+  const options = {
+    responsive: true,
+    maintainAspectRatio: false,
+    layout: { padding: { top: 26, right: 8, left: 4 } },
+    interaction: { mode: "index", intersect: false },
+    plugins: {
+      legend: { display: false },
+      tooltip: {
+        callbacks: {
+          label: c => c.parsed.y == null ? "无数据" : "¥" + fmtMoney(c.parsed.y)
+        }
+      },
+      datalabels: {
+        display: showLabel,
+        color: "#333",
+        font: { size: labelFont, weight: "700" },
+        formatter: v => v == null ? "" : "¥" + fmtMoney(v),
+        align: "top",
+        anchor: isBar ? "end" : "center",
+        offset: isBar ? 2 : 6,
+        clamp: true,
+        rotation: 0,
+      }
+    },
+    scales: {
+      x: {
+        ticks: {
+          maxRotation: 45,
+          minRotation: 0,
+          autoSkip: true,
+          maxTicksLimit: n <= 15 ? n : 14,   // 点数少时全部显示日期
+          font: { size: 9 },
+        },
+        grid: { display: false }
+      },
+      y: {
+        beginAtZero: false,
+        grace: "10%",                          // 上下各留 10% 空白，柱子不贴顶
+        ticks: {
+          precision: 0,
+          maxTicksLimit: 6,                    // 只显示 5~6 个整刻度
+          callback: v => "¥" + fmtMoney(v),
+          font: { size: 9 },
+        },
+        grid: { color: "rgba(0,0,0,.05)" }
+      }
+    }
+  };
+
+  // 如果所有值都相同（如只有一天，或价格一模一样），手动扩展 Y 轴范围，避免出现一条"贴底直线"
+  if (validValues.length > 0) {
+    const min = Math.min(...validValues);
+    const max = Math.max(...validValues);
+    if (max - min < Math.max(1, max * 0.02)) {
+      const pad = Math.max(max * 0.08, 10);
+      options.scales.y.suggestedMin = Math.max(0, min - pad);
+      options.scales.y.suggestedMax = max + pad;
+    }
+  }
+
+  if(chart) chart.destroy();
+  chart = new Chart(document.getElementById("chart"), {
+    type: chartType,
+    data: { labels: shortDates, datasets: [dataset] },
+    options
+  });
+}
+
+// ========== 历史记录 ==========
+function renderHistory(){
+  const all = loadAll();
+  const dates = Object.keys(all).sort().reverse();
+  const list = document.getElementById("history-list");
+  document.getElementById("record-count").textContent = dates.length + " 天";
+  if(dates.length === 0){
+    list.innerHTML = '<div style="color:#aaa;padding:8px 0">暂无记录</div>';
+    return;
+  }
+
+  list.innerHTML = dates.map(d=>{
+    const day = all[d];
+    let total = 0;
+    PARTS.forEach(p=>{ if(typeof day[p.key] === "number") total += day[p.key]; });
+    const detail = PARTS
+      .filter(p=>typeof day[p.key] === "number")
+      .map(p=>`<span>${p.name.split(" ")[0]}</span><span>¥${fmtMoney(day[p.key])}</span>`)
+      .join("");
+    return `<details class="history-item">
+      <summary><span class="d">${d}</span><span class="v">¥${fmtMoney(total)}</span></summary>
+      <div class="detail-grid">${detail}</div>
+    </details>`;
+  }).join("");
+}
+
+// ========== 初始化 ==========
+function init(){
+  buildForm();
+  buildModeSwitch();
+  buildTypeSwitch();
+
+  const today = new Date().toISOString().slice(0,10);
+  const dateInput = document.getElementById("input-date");
+  dateInput.max = END_DATE;
+  dateInput.value = (today > END_DATE) ? END_DATE : today;
+  dateInput.addEventListener("change", ()=> fillFormForDate(dateInput.value));
+
+  fillFormForDate(dateInput.value);
+  renderChart();
+  renderHistory();
+  updateRemain();
+}
+
+init();
+</script>
+</body>
+</html>
